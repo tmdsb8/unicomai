@@ -1,0 +1,1555 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>联通 AI 摄像头监控平台</title>
+<style>
+:root{
+  --bg:#0b0f14; --panel:#141b24; --panel2:#1b2430; --line:#243040;
+  --text:#e6edf3; --muted:#8b9aad; --accent:#2f81f7; --ok:#3fb950; --warn:#d29922; --bad:#f85149;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;height:100vh;overflow:hidden}
+.top{height:56px;display:flex;align-items:center;gap:16px;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+.logo{font-size:16px;font-weight:600;letter-spacing:.5px}
+.logo span{color:var(--accent)}
+.tabs{display:flex;gap:4px;margin-left:24px}
+.tab{padding:8px 16px;border-radius:8px;cursor:pointer;color:var(--muted);font-weight:500;user-select:none}
+.tab:hover{background:var(--panel2);color:var(--text)}
+.tab.active{background:var(--accent);color:#fff}
+.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.off{background:var(--bad)}
+.wrap{height:calc(100vh - 56px);overflow-y:auto;padding:20px}
+.page{display:none;max-width:1500px;margin:0 auto}
+.page.active{display:block}
+.grid{display:grid;gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+.card h3{font-size:15px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.card h3 small{color:var(--muted);font-weight:400;font-size:12px}
+
+/* ---------- 24 小时时间轨道 ---------- */
+.tl-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px 12px}
+.tl-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.tl-head select{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+  border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer}
+.tl-head .tl-stat{color:var(--muted);font-size:12px}
+.tl-head .tl-now{margin-left:auto;display:flex;gap:8px}
+.tl-hours{position:relative;height:15px;margin:0 0 3px}
+.tl-hours span{position:absolute;transform:translateX(-50%);font-size:10px;color:#67788c;letter-spacing:.3px}
+.tl-track{position:relative;height:36px;background:#0d1319;border:1px solid var(--line);
+  border-radius:8px;overflow:hidden;cursor:crosshair;user-select:none;touch-action:none}
+.tl-seg{position:absolute;top:0;bottom:0;background:linear-gradient(180deg,#2f81f7,#1b5fc4);
+  opacity:.7;border-radius:2px}
+.tl-seg:hover{opacity:1}
+.tl-evt{position:absolute;top:0;bottom:0;width:3px;border-radius:1px;cursor:pointer;z-index:3}
+.tl-evt.person{background:#f85149}
+.tl-evt.vehicle{background:#d29922}
+.tl-evt.motion{background:#58a6ff;opacity:.85}
+.tl-evt::after{content:"";position:absolute;left:-3px;right:-3px;top:0;bottom:0}
+.tl-cursor{position:absolute;top:-3px;bottom:-3px;width:2px;background:#fff;z-index:4;
+  box-shadow:0 0 7px rgba(255,255,255,.85);pointer-events:none;display:none}
+.tl-cursor.on{display:block}
+.tl-cursor::before{content:"";position:absolute;top:-5px;left:-4px;width:10px;height:10px;
+  background:#fff;border-radius:50%;box-shadow:0 0 8px rgba(255,255,255,.7)}
+.tl-tip{position:fixed;z-index:99;background:rgba(13,17,23,.96);border:1px solid var(--line);
+  color:#e6edf3;font-size:12px;line-height:1.5;padding:5px 9px;border-radius:7px;
+  pointer-events:none;display:none;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.5)}
+.tl-legend{display:flex;gap:16px;margin-top:10px;font-size:11px;color:var(--muted);flex-wrap:wrap;align-items:center}
+.tl-legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.live-layout{display:grid;grid-template-columns:1fr 340px;gap:16px}
+@media(max-width:1100px){.live-layout{grid-template-columns:1fr}}
+.video-box{position:relative;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:16/9}
+.video-box video{width:100%;height:100%;display:block;object-fit:contain;background:#000;
+  will-change:transform;transform-origin:center center}
+.video-box .overlay{position:absolute;inset:0;pointer-events:none}
+.badge-live{position:absolute;top:12px;right:12px;background:rgba(248,81,73,.92);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px}
+.pulse{width:7px;height:7px;background:#fff;border-radius:50%;animation:pulse 1.3s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+/* 云台悬浮控制盘：叠在直播画面右下角，不挡左上时间戳与右上 LIVE */
+.ptz{position:absolute;right:14px;bottom:52px;z-index:6;display:grid;
+  grid-template-columns:repeat(3,42px);grid-template-rows:repeat(3,42px);gap:6px;
+  padding:10px;border-radius:15px;background:rgba(13,17,23,.66);
+  border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(8px);
+  box-shadow:0 6px 22px rgba(0,0,0,.5);opacity:.92;transition:opacity .18s}
+.ptz:hover{opacity:1}
+.ptz.digital::after{content:"数字云台";position:absolute;top:-9px;right:9px;background:#1f6feb;
+  color:#fff;font-size:10px;line-height:1.6;padding:0 6px;border-radius:6px;letter-spacing:.3px}
+.ptz.digital button[data-act="stop"]{opacity:.45}
+.ptz button{width:42px;height:42px;border:1px solid rgba(255,255,255,.22);border-radius:10px;
+  background:rgba(255,255,255,.12);color:#eef3f8;font-size:15px;line-height:1;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;user-select:none;touch-action:none;
+  -webkit-tap-highlight-color:transparent;transition:background .12s,border-color .12s,transform .08s}
+.ptz button:hover{background:rgba(88,166,255,.26);border-color:rgba(88,166,255,.5)}
+.ptz button:active,.ptz button.on{background:rgba(88,166,255,.55);border-color:#58a6ff;transform:scale(.94)}
+.ptz button[data-act="zin"]{grid-area:1/1;font-size:17px;color:#58a6ff}
+.ptz button[data-act="zout"]{grid-area:1/3;font-size:17px;color:#58a6ff}
+.ptz button[data-act="up"]{grid-area:1/2}
+.ptz button[data-act="left"]{grid-area:2/1}
+.ptz button[data-act="stop"]{grid-area:2/2;color:#ff7b72;font-size:11px}
+.ptz button[data-act="right"]{grid-area:2/3}
+.ptz button[data-act="down"]{grid-area:3/2}
+.ptz button[data-act="reset"]{grid-area:3/3;font-size:17px;color:#9aa7b4}
+.ptz-tip{position:absolute;right:14px;bottom:238px;z-index:7;padding:5px 10px;border-radius:8px;
+  background:rgba(13,17,23,.88);color:#c9d1d9;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none}
+.ptz-tip.show{opacity:1}
+/* 手机竖屏：控制盘收小一点，别把画面挡太多 */
+@media (max-width:640px){
+  .ptz{grid-template-columns:repeat(3,34px);grid-template-rows:repeat(3,34px);gap:5px;padding:8px;right:8px;bottom:44px}
+  .ptz button{width:34px;height:34px;font-size:13px}
+  .ptz button[data-act="reset"]{font-size:15px}
+  .ptz-tip{bottom:206px;right:8px;font-size:11px}
+}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat{background:var(--panel2);border-radius:10px;padding:12px}
+.stat .k{color:var(--muted);font-size:12px}
+.stat .v{font-size:20px;font-weight:600;margin-top:2px}
+.stat .v small{font-size:12px;color:var(--muted);font-weight:400}
+.row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:none}
+.btn{background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500}
+.btn:hover{filter:brightness(1.12)}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+.btn.sm{padding:5px 12px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.switch{position:relative;width:44px;height:24px;background:#3a4553;border-radius:12px;cursor:pointer;transition:.2s;flex-shrink:0}
+.switch.on{background:var(--ok)}
+.switch::after{content:'';position:absolute;width:18px;height:18px;background:#fff;border-radius:50%;top:3px;left:3px;transition:.2s}
+.switch.on::after{left:23px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:500;padding:10px 12px;border-bottom:1px solid var(--line);font-size:12px}
+td{padding:10px 12px;border-bottom:1px solid var(--line)}
+tr:hover td{background:var(--panel2)}
+.evt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.evt{background:var(--panel2);border-radius:10px;overflow:hidden;cursor:pointer;border:1px solid transparent;transition:.15s}
+.evt:hover{border-color:var(--accent);transform:translateY(-2px)}
+.evt img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:#000}
+.evt .info{padding:10px 12px}
+.evt .t{font-weight:600;font-size:13px}
+.evt .m{color:var(--muted);font-size:12px;margin-top:2px}
+.tag{display:inline-block;padding:2px 8px;border-radius:5px;font-size:11px;background:rgba(47,129,247,.15);color:#6ea8fe;margin-right:4px}
+.tag.red{background:rgba(248,81,73,.15);color:#ff7b72}
+input,select{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:8px 12px;border-radius:8px;font-size:13px;width:100%;font-family:inherit}
+input:focus,select:focus{outline:none;border-color:var(--accent)}
+label{display:block;color:var(--muted);font-size:12px;margin:10px 0 5px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.8);display:none;align-items:center;justify-content:center;z-index:99;padding:24px}
+.modal.show{display:flex}
+.modal .box{background:var(--panel);border-radius:14px;max-width:1100px;width:100%;max-height:90vh;overflow-y:auto;padding:20px}
+.shots{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
+.shots img{width:100%;border-radius:8px;cursor:pointer}
+.empty{text-align:center;color:var(--muted);padding:48px 0}
+.bar{height:6px;background:var(--panel2);border-radius:3px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--accent);transition:.4s}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.flex{display:flex;gap:10px;align-items:center}
+.mt{margin-top:14px}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="logo">联通 <span>AI</span> 监控平台</div>
+  <div class="tabs">
+    <div class="tab active" data-tab="live">实时直播</div>
+    <div class="tab" data-tab="record">自动录像</div>
+    <div class="tab" data-tab="events">AI 事件</div>
+    <div class="tab" data-tab="cloud">云盘备份</div>
+    <div class="tab" data-tab="account">账号</div>
+  </div>
+  <div style="margin-left:auto;font-size:12px;color:var(--muted)" id="clock"></div>
+</div>
+
+<div class="wrap">
+  <!-- 直播 -->
+  <div class="page active" id="page-live">
+    <div class="live-layout">
+      <div>
+        <div class="card" style="padding:0;overflow:hidden">
+          <div class="video-box">
+            <video id="video" autoplay muted playsinline controls></video>
+            <canvas id="overlay" class="overlay"></canvas>
+            <div class="ptz" id="ptzPad" title="方向键平移画面，+/- 缩放，双击画面复位">
+              <button data-act="zin" title="放大">＋</button>
+              <button data-act="up" title="上转">▲</button>
+              <button data-act="zout" title="缩小">－</button>
+              <button data-act="left" title="左转">◀</button>
+              <button data-act="stop" title="停止">■</button>
+              <button data-act="right" title="右转">▶</button>
+              <button data-act="down" title="下转">▼</button>
+              <button data-act="reset" title="云台复位">↺</button>
+            </div>
+            <div class="ptz-tip" id="ptzTip"></div>
+            <div class="badge-live" id="liveBadge" style="display:none"><span class="pulse"></span>LIVE</div>
+            <div style="position:absolute;left:10px;top:10px;display:flex;gap:6px;z-index:5">
+              <button class="btn ghost sm" id="spkBtn" onclick="toggleSpeaker()" title="开启/关闭监控声音">🔇 声音关</button>
+              <button class="btn ghost sm" id="talkBtn" title="按住对准麦克风说话，松开结束">🎤 按住说话</button>
+            </div>
+          </div>
+        </div>
+        <div class="card mt">
+          <h3>AI 实时检测 <small id="aiHint">每 1 秒抽帧分析 · 2 秒刷新一次检测框</small></h3>
+          <div class="flex">
+            <select id="devSel" onchange="switchDevice(this.value)" title="切换摄像头"
+              style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--text);outline:none;font-size:13px"></select>
+            <button class="btn ghost sm" onclick="startAIView()">开始叠加检测框</button>
+            <button class="btn ghost sm" onclick="stopAIView()">停止</button>
+            <button class="btn ghost sm" onclick="ptzSelfTest(this)">云台自检</button>
+            <button class="btn ghost sm" id="wrtcBtn" onclick="toggleWebRTC()">低延迟模式 (WebRTC)</button>
+            <span style="color:var(--muted);font-size:12px" id="aiViewMsg"></span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <h3>设备状态</h3>
+          <div class="row"><span style="color:var(--muted)">连接</span><span id="stConn">-</span></div>
+          <div class="row"><span style="color:var(--muted)">帧率</span><span id="stFps">-</span></div>
+          <div class="row"><span style="color:var(--muted)">累计流量</span><span id="stBytes">-</span></div>
+          <div class="row"><span style="color:var(--muted)">缓冲</span><span id="stRing">-</span></div>
+          <div class="row"><span style="color:var(--muted)">观看人数</span><span id="stView">-</span></div>
+        </div>
+        <div class="card mt">
+          <h3>开关</h3>
+          <div class="row"><span>自动录像</span><div class="switch on" id="swRecord"></div></div>
+          <div class="row"><span>AI 检测</span><div class="switch on" id="swAI"></div></div>
+        </div>
+        <div class="card mt">
+          <h3>AI 统计</h3>
+          <div class="stats">
+            <div class="stat"><div class="k">已分析帧</div><div class="v" id="aiFrames">0</div></div>
+            <div class="stat"><div class="k">命中次数</div><div class="v" id="aiHits">0</div></div>
+            <div class="stat"><div class="k">保存事件</div><div class="v" id="aiSaved">0</div></div>
+            <div class="stat"><div class="k">最近命中</div><div class="v" style="font-size:14px" id="aiLast">-</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 录像 -->
+  <div class="page" id="page-record">
+    <div class="tl-card" style="margin-bottom:16px">
+      <div class="tl-head">
+        <b style="font-size:14px">录像时间轴</b>
+        <select id="tlDate" onchange="loadTimeline(this.value)"></select>
+        <span class="tl-stat" id="tlStat">加载中…</span>
+        <span class="tl-now">
+          <button class="btn ghost sm" onclick="tlGotoEvent()">上一个事件</button>
+          <button class="btn ghost sm" onclick="loadTimeline($('#tlDate').value)">刷新</button>
+        </span>
+      </div>
+      <div class="tl-hours" id="tlHours"></div>
+      <div class="tl-track" id="tlTrack">
+        <div id="tlSegs"></div>
+        <div id="tlEvts"></div>
+        <div class="tl-cursor" id="tlCursor"></div>
+      </div>
+      <div class="tl-legend">
+        <span><i style="background:linear-gradient(180deg,#2f81f7,#1b5fc4)"></i>有录像</span>
+        <span><i style="background:#0d1319;border:1px solid #243040"></i>无录像</span>
+        <span><i style="background:#f85149"></i>检测到人</span>
+        <span><i style="background:#d29922"></i>车辆/动物/物品</span>
+        <span><i style="background:#58a6ff"></i>画面运动</span>
+        <span style="margin-left:auto">在轨道上按住拖动可定位，点击事件红点直接回放</span>
+      </div>
+      <div class="tl-tip" id="tlTip"></div>
+    </div>
+
+    <div class="card">
+      <h3>当日录像 <small id="recCount"></small>
+        <span style="margin-left:auto"><button class="btn sm" onclick="backupAll()">全部备份到云盘</button></span>
+      </h3>
+      <table><thead><tr><th>时段</th><th>时长</th><th>大小</th><th>格式</th><th style="width:150px">操作</th></tr></thead>
+      <tbody id="recBody"><tr><td colspan="5" class="empty">加载中…</td></tr></tbody></table>
+    </div>
+  </div>
+
+  <!-- 事件 -->
+  <div class="page" id="page-events">
+    <div class="card">
+      <h3>AI 事件 <small>检测到人或移动物体时自动保存 20 秒视频 + 3 张截图</small>
+        <span style="margin-left:auto"><button class="btn ghost sm" onclick="loadEvents()">刷新</button></span>
+      </h3>
+      <div class="evt-grid" id="evtGrid"><div class="empty">暂无事件</div></div>
+    </div>
+  </div>
+
+  <!-- 云盘 -->
+  <div class="page" id="page-cloud">
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="card">
+        <h3>云盘配置</h3>
+        <label>存储驱动</label>
+        <select id="drvSelect" onchange="renderDriverForm()">
+          <option value="local">本地目录（模拟，用于测试）</option>
+          <option value="cmcc">中国移动云盘（139）</option>
+          <option value="ctyun">天翼云盘（189）</option>
+          <option value="cucc">联通云盘（沃盘）</option>
+          <option value="webdav">WebDAV（坚果云 / 群晖 / Nextcloud）</option>
+          <option value="s3">S3 兼容（OSS / COS / MinIO）</option>
+          <option value="baidu">百度网盘</option>
+        </select>
+        <div id="drvForm"></div>
+        <div class="mt">
+          <div class="row"><span>启用云盘备份</span><div class="switch" id="swCloud"></div></div>
+          <div class="row"><span>自动备份整段录像</span><div class="switch" id="swBkRec"></div></div>
+          <div class="row"><span>上传事件视频与截图</span><div class="switch" id="swBkEvt"></div></div>
+        </div>
+        <div class="flex mt">
+          <button class="btn" onclick="saveCloud()">保存</button>
+          <button class="btn ghost" onclick="testCloud()">测试连接</button>
+          <span id="cloudMsg" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+      </div>
+      <div class="card">
+        <h3>上传记录 <small id="qinfo"></small></h3>
+        <table><thead><tr><th>时间</th><th>文件</th><th>类型</th><th>结果</th></tr></thead>
+        <tbody id="upBody"><tr><td colspan="4" class="empty">暂无上传</td></tr></tbody></table>
+      </div>
+    </div>
+
+  </div>
+
+    <div class="page" id="page-account">
+      <div class="card" style="max-width:460px">
+        <h3>修改账号 / 密码</h3>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+          当前账号：<b id="accName">-</b> · 改完请用新凭据重新登录（其他已登录设备会被踢下线）
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">当前密码（必填）</div>
+          <input id="accOld" type="password" autocomplete="current-password"
+            style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text);outline:none">
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">新账号名（留空则不改）</div>
+          <input id="accNewUser" autocomplete="username"
+            style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text);outline:none">
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">新密码（≥6 位，留空则不改）</div>
+          <input id="accNewPass" type="password" autocomplete="new-password"
+            style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text);outline:none">
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">确认新密码</div>
+          <input id="accNewPass2" type="password" autocomplete="new-password"
+            style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text);outline:none">
+        </div>
+        <div class="flex" style="align-items:center">
+          <button class="btn" onclick="saveAccount()">保存修改</button>
+          <button class="btn ghost" onclick="doLogout()">退出登录</button>
+          <span id="accMsg" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+      </div>
+
+      <div class="card mt" style="max-width:520px">
+        <h3>摄像头接入（联通看家账户）<small>支持多台</small></h3>
+        <div id="camList" style="margin-bottom:14px"></div>
+        <h3 style="font-size:14px" id="camFormTitle">添加 / 更新摄像头</h3>
+        <details style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          <summary style="cursor:pointer">▸ 怎么获取 token？（点开看教程）</summary>
+          <div style="margin-top:8px;line-height:1.8">
+            1. 电脑 Chrome 打开 <a href="https://we.wo.cn/web/smart-club-pc-v2/?clientId=1001000001" target="_blank" style="color:var(--accent)">联通看家网页版</a> 并登录；<br>
+            2. 按 F12 → Network（网络）→ 点对应摄像头的直播预览；<br>
+            3. 找到地址为 <code>wss://…/h5player/live</code> 的连接，点 Payload/消息：<br>
+            　· <b>token</b>：请求参数 JSON 里的 <code>token</code> 字段；<br>
+            　· <b>deviceId</b>：同在参数 JSON 里（形如 xxxxS_xxxx）；<br>
+            　· <b>wsHost</b>：wss:// 后面的主机:端口；<br>
+            　· <b>relayServer</b>：中继参数（如有）。<br>
+            token 有效期有限，过期后重新抓一次即可。联通未开放账号密码直连接口，App 内部票据流程无法在服务器上完成，所以采用 token 直填。
+          </div>
+        </details>
+        <div style="margin-bottom:12px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">摄像头名称</div>
+          <input id="camName" style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text);outline:none">
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">deviceId（必填，唯一标识）</div>
+          <input id="camDevId" placeholder="如 xxxxS_xxxxxxxxxxxx" style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text);outline:none">
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">token<span id="camTokState" style="margin-left:6px"></span></div>
+          <input id="camToken" placeholder="新增必填；更新已有设备留空则沿用" style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text);outline:none">
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">wsHost（必填）</div>
+          <input id="camWsHost" placeholder="如 vd-file-hncs-wcloud.wojiazongguan.cn:50443" style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text);outline:none">
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">relayServer（选填）</div>
+          <input id="camRelay" placeholder="如 116.162.189.114:50921" style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text);outline:none">
+        </div>
+        <div class="flex" style="align-items:center">
+          <button class="btn ghost" onclick="testCamAccess()">测试连接</button>
+          <button class="btn" onclick="saveCamAccess()">保存（测试通过才写入）</button>
+          <button class="btn ghost" id="camReset" onclick="resetCamForm()" style="display:none">取消编辑</button>
+          <span id="camMsg" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+      </div>
+    </div>
+</div>
+
+<!-- 事件详情 -->
+<div class="modal" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="box">
+    <div class="flex" style="justify-content:space-between;margin-bottom:12px">
+      <h3 style="font-size:16px" id="mTitle">事件详情</h3>
+      <button class="btn ghost sm" onclick="closeModal()">关闭</button>
+    </div>
+    <video id="mVideo" controls style="width:100%;border-radius:10px;background:#000"></video>
+    <div class="mt" style="color:var(--muted);font-size:13px" id="mMeta"></div>
+    <div class="shots" id="mShots"></div>
+  </div>
+
+</div>
+
+<script>
+let devices=[], curDev=null, liveAbort=null, aiTimer=null;
+
+const $=s=>document.querySelector(s);
+const qsa=s=>document.querySelectorAll(s);
+
+// tab 切换
+qsa('.tab').forEach(t=>t.onclick=()=>{
+  qsa('.tab').forEach(x=>x.classList.remove('active'));
+  qsa('.page').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  $('#page-'+t.dataset.tab).classList.add('active');
+  if(t.dataset.tab==='record') initTimeline();
+  if(t.dataset.tab==='events') loadEvents();
+  if(t.dataset.tab==='cloud') loadCloud();
+});
+
+setInterval(()=>{$('#clock').textContent=new Date().toLocaleString('zh-CN')},1000);
+$('#clock').textContent=new Date().toLocaleString('zh-CN');
+
+async function api(url,opt){const r=await fetch(url,opt);if(!r.ok){
+  if(r.status===401){ const m=$('#loginMask'); if(m){m.style.display='flex'; authGate();} throw new Error('未登录'); }
+  throw new Error(await r.text());}
+return r.json()}
+
+// ---------- 设备（多摄像头） ----------
+let selDevId = localStorage.getItem('selDev') || '';
+
+function fillDevSel(){
+  const sel=$('#devSel');
+  sel.innerHTML = devices.map(d =>
+    `<option value="${d.deviceId}" ${d.deviceId===selDevId?'selected':''}>${(d.name||d.deviceId).replace(/</g,'&lt;')}</option>`).join('');
+}
+
+async function switchDevice(id){
+  if(!id || id===selDevId) return;
+  selDevId=id; localStorage.setItem('selDev', id);
+  curDev=devices.find(d=>d.deviceId===id)||null;
+  stopAIView(); stopWebRTC(); stopLive();
+  $('#aiFrames').textContent='0'; $('#aiHits').textContent='0'; $('#aiSaved').textContent='0';
+  renderStatus();
+  if(curDev){
+    $('#stConn').textContent='连接中…';
+    startLive(); vpLoad();
+  }
+}
+
+async function loadDevices(){
+  devices=await api('/api/devices');
+  fillDevSel();
+  if(!devices.length){return}
+  curDev=devices.find(d=>d.deviceId===selDevId)||devices[0];
+  selDevId=curDev.deviceId; localStorage.setItem('selDev', selDevId);
+  $('#devSel').value=selDevId;
+  renderStatus();
+  startLive();
+  vpLoad();
+  bindSwitches();
+}
+
+function renderStatus(){
+  const d=curDev; if(!d)return;
+  $('#stConn').innerHTML=`<span class="status-dot ${d.connected?'on':'off'}"></span>${d.connected?'已连接':'未连接'}`;
+  $('#stFps').textContent=d.fps+' fps';
+  $('#stBytes').textContent=d.totalMB+' MB';
+  $('#stRing').textContent=d.ringMB+' MB';
+  $('#stView').textContent=d.liveViewers;
+  // 机身无云台电机的设备（固定枪机）自动切到数字云台：平移/缩放画面，按键马上有反馈
+  const pad=$('#ptzPad'); if(pad) pad.classList.toggle('digital', d.ptz===false);
+  const ai=d.ai||{};
+  $('#aiFrames').textContent=ai.stats?.frames||0;
+  $('#aiHits').textContent=ai.stats?.hits||0;
+  $('#aiSaved').textContent=ai.stats?.saved||0;
+  $('#aiLast').textContent=ai.lastHit?(ai.lastHit+' '+ai.lastReason):'-';
+  $('#swRecord').classList.toggle('on', d.autoRecord);
+  $('#swAI').classList.toggle('on', d.aiEnabled);
+  const lj=ai.lastJudge||{};
+  $('#aiHint').textContent = ai.modelReady
+    ? '模型就绪 · 每 '+(ai.config?.interval||1)+' 秒抽帧'
+      + (lj.at ? ' · 最近判定 '+lj.at+(lj.count?' 检出 '+lj.count+' 个':' 未检出目标')+` 运动 ${(lj.motion||0).toFixed(3)}` : '')
+    : '模型未加载';
+}
+
+function bindSwitches(){
+  $('#swRecord').onclick=async()=>{
+    const on=!$('#swRecord').classList.contains('on');
+    await api(`/api/devices/${curDev.deviceId}/record`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:on})});
+    $('#swRecord').classList.toggle('on',on);
+  };
+  $('#swAI').onclick=async()=>{
+    const on=!$('#swAI').classList.contains('on');
+    await api(`/api/devices/${curDev.deviceId}/ai`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:on})});
+    $('#swAI').classList.toggle('on',on);
+  };
+}
+
+// ---------- 直播 ----------
+let mse = null;
+
+function startLive(){
+  if(!curDev)return;
+  stopLive();
+  const v=$('#video');
+  $('#liveBadge').style.display='flex';
+  $('#stConn').textContent='连接中…';
+
+  if(!window.MediaSource){
+    v.src=`/api/live/${curDev.deviceId}?t=${Date.now()}`;
+    v.play().catch(()=>{});
+    return;
+  }
+
+  const ms = new MediaSource();
+  mse = { ms, sb:null, queue:[], busy:false, stopped:false, url:URL.createObjectURL(ms) };
+  v.src = mse.url;
+
+  // 自愈看门狗：10 秒内没有任何数据进缓冲，多半是 MSE 编码档位不兼容
+  // （部分手机浏览器 addSourceBuffer 接受但拒解码）。自动降级为
+  // 直接播放原始 fMP4 流，并在状态栏说明原因。
+  clearTimeout(startLive._wd);
+  startLive._wd = setTimeout(()=>{
+    if(mse && !mse.stopped && (!v.buffered.length || v.buffered.end(0) < 0.5)){
+      const info = 'MSE 无数据(rs='+v.readyState+')，已切兼容模式';
+      console.warn('[live]', info);
+      stopLive();
+      v.src = `/api/live/${curDev.deviceId}?t=${Date.now()}`;
+      v.play().catch(()=>{});
+      $('#stConn').textContent = '兼容模式播放中';
+      ptzTip('画面走兼容模式：如仍黑屏请换 Chrome/Edge');
+    }
+  }, 10000);
+
+  ms.addEventListener('sourceopen', ()=>{
+    if(mse.stopped) return;
+    try{
+      // 服务端产出的是 fMP4（h264 Constrained Baseline L5.0 + aac）
+      const sb = ms.addSourceBuffer('video/mp4; codecs="avc1.42C032, mp4a.40.2"');
+      mse.sb = sb;
+      sb.mode = 'segments';
+      sb.addEventListener('updateend', ()=> flushChunk());
+      pumpLive();
+    }catch(e){
+      $('#stConn').textContent='浏览器不支持 MSE';
+    }
+  }, { once:true });
+}
+
+function stopLive(){
+  if(talk) stopTalk();
+  if(mse){
+    mse.stopped = true;
+    try{ URL.revokeObjectURL(mse.url); }catch(e){}
+    mse = null;
+  }
+  if(liveAbort){ try{ liveAbort.abort(); }catch(e){} liveAbort = null; }
+}
+
+// ---------- 云台 ----------
+let ptzRepeat = null, ptzTipTimer = null;
+
+function ptzTip(msg){
+  const t = $('#ptzTip');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(ptzTipTimer);
+  ptzTipTimer = setTimeout(()=>t.classList.remove('show'), 1800);
+}
+
+async function ptzSend(action, quiet){
+  if(!curDev) return null;
+  try{
+    const r = await fetch(`/api/ptz/${encodeURIComponent(curDev.deviceId)}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({action})
+    });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){
+      if(!quiet) ptzTip(d.detail || '下发失败');
+      return null;
+    }
+    return d;
+  }catch(e){
+    if(!quiet) ptzTip('网络异常');
+    return null;
+  }
+}
+
+// 数字云台：机身上没有电机时，用画面平移+缩放实现同样的“上下左右”效果
+// 状态按设备存在本地，刷新后视角不跳
+const VP = { z:1, x:0, y:0 };
+function vpDigital(){ return !!(curDev && curDev.ptz === false); }
+function vpKey(){ return 'vp_' + (curDev ? curDev.deviceId : ''); }
+function vpApply(){
+  const v = $('#video'); if(!v) return;
+  v.style.transform = `translate(${VP.x.toFixed(1)}px, ${VP.y.toFixed(1)}px) scale(${VP.z.toFixed(3)})`;
+}
+function vpLoad(){
+  let o = null;
+  try{ o = JSON.parse(localStorage.getItem(vpKey()) || 'null'); }catch(e){}
+  VP.z = (o && o.z) ? o.z : 1;
+  VP.x = (o && o.x) ? o.x : 0;
+  VP.y = (o && o.y) ? o.y : 0;
+  if(VP.z < 1) VP.z = 1;
+  vpClamp(); vpApply();
+}
+function vpSave(){ try{ localStorage.setItem(vpKey(), JSON.stringify(VP)); }catch(e){} }
+function vpClamp(){
+  const v = $('#video'); if(!v) return;
+  const mx = Math.max(0, (VP.z - 1) / 2 * v.clientWidth);
+  const my = Math.max(0, (VP.z - 1) / 2 * v.clientHeight);
+  VP.x = Math.max(-mx, Math.min(mx, VP.x));
+  VP.y = Math.max(-my, Math.min(my, VP.y));
+}
+function vpPan(dx, dy){
+  // 1:1 时没有余量可平移，按一下就自动放大到 1.4 倍，手感才跟得上
+  if(VP.z < 1.05) VP.z = 1.4;
+  VP.x += dx; VP.y += dy;
+  vpClamp(); vpApply();
+}
+function vpZoom(k){
+  VP.z = Math.max(1, Math.min(3, VP.z * k));
+  vpClamp(); vpApply(); vpSave();
+  ptzTip('数字变焦 ' + VP.z.toFixed(1) + '×');
+}
+function vpReset(){ VP.z = 1; VP.x = 0; VP.y = 0; vpApply(); vpSave(); }
+
+let vpHold = null, vpRaf = null;
+
+function vpHoldStart(act){
+  const dir = {left:[1,0], right:[-1,0], up:[0,1], down:[0,-1]}[act];
+  if(!dir) return;
+  vpHold = dir;
+  cancelAnimationFrame(vpRaf);
+  const tick = ()=>{
+    if(!vpHold) return;
+    // 每帧 6px ≈ 360px/s，按住一小会儿就能把画面推到边上
+    vpPan(vpHold[0]*6, vpHold[1]*6);
+    vpRaf = requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+function vpHoldStop(){
+  if(!vpHold) return;
+  vpHold = null;
+  cancelAnimationFrame(vpRaf);
+  vpSave();
+}
+
+function ptzStart(ev, act){
+  ev.preventDefault();
+  ev.currentTarget.classList.add('on');
+  if(vpDigital()){
+    if(act === 'zin'){ vpZoom(1.25); return; }
+    if(act === 'zout'){ vpZoom(1/1.25); return; }
+    if(act === 'stop'){ vpHoldStop(); return; }
+    vpHoldStart(act);
+    return;
+  }
+  ptzSend(act);
+  // 长按续发：部分固件单条指令只转一小步，持续发才能连续转动
+  clearInterval(ptzRepeat);
+  ptzRepeat = setInterval(()=>ptzSend(act, true), 350);
+}
+
+function ptzEnd(){
+  const was = ptzRepeat !== null;
+  clearInterval(ptzRepeat);
+  ptzRepeat = null;
+  vpHoldStop();
+  document.querySelectorAll('#ptzPad button').forEach(b=>b.classList.remove('on'));
+  if(was && !vpDigital()){
+    ptzSend('stop', true);
+    vpSave();
+  }
+}
+
+function initPtz(){
+  if(vpDigital()){
+    setTimeout(()=>ptzTip('该机型为固定镜头，方向键用于平移/缩放画面'), 1500);
+  }else{
+    setTimeout(()=>ptzTip('云台已就绪：长按方向键转动镜头，松开即停'), 1500);
+  }
+  document.querySelectorAll('#ptzPad button[data-act]').forEach(b=>{
+    const act = b.dataset.act;
+    if(act === 'stop'){
+      b.addEventListener('click', ()=>{ ptzEnd(); ptzTip(vpDigital()?'已停止':'已停止转动'); });
+    }else if(act === 'reset'){
+      b.addEventListener('click', async ()=>{
+        if(vpDigital()){ vpReset(); ptzTip('视角已复位'); return; }
+        const r = await ptzSend('reset');
+        ptzTip(r ? '已复位' : '复位失败');
+      });
+    }else{
+      b.addEventListener('pointerdown', e=>ptzStart(e, act));
+      b.addEventListener('pointerup', ptzEnd);
+      b.addEventListener('pointercancel', ptzEnd);
+      b.addEventListener('pointerleave', ()=>{ if(ptzRepeat) ptzEnd(); });
+    }
+  });
+
+  // 数字云台附加手势：滚轮缩放、拖拽平移、双击复位
+  const v = $('#video');
+  v.addEventListener('wheel', e=>{
+    if(!vpDigital()) return;
+    e.preventDefault();
+    VP.z = Math.max(1, Math.min(3, VP.z * (e.deltaY < 0 ? 1.08 : 1/1.08)));
+    vpClamp(); vpApply();
+  }, { passive:false });
+  let drag = null;
+  v.addEventListener('pointerdown', e=>{
+    if(!vpDigital()) return;
+    const r = v.getBoundingClientRect();
+    if(e.clientY > r.bottom - 46) return;   // 底部是播放控件条，别抢它的手势
+    drag = { x:e.clientX, y:e.clientY };
+  });
+  v.addEventListener('pointermove', e=>{
+    if(!drag || !vpDigital()) return;
+    vpPan(e.clientX - drag.x, e.clientY - drag.y);
+    drag = { x:e.clientX, y:e.clientY };
+  });
+  v.addEventListener('pointerup', ()=>{ if(drag){ drag = null; vpSave(); } });
+  v.addEventListener('dblclick', ()=>{ if(vpDigital()){ vpReset(); ptzTip('视角已复位'); } });
+}
+
+async function pumpLive(){
+  if(!mse || mse.stopped) return;
+  liveAbort = new AbortController();
+  try{
+    const resp = await fetch(`/api/live/${curDev.deviceId}?t=${Date.now()}`,
+                             { signal: liveAbort.signal });
+    if(!resp.ok || !resp.body) throw new Error('HTTP '+resp.status);
+    $('#stConn').textContent='已连接';
+    const reader = resp.body.getReader();
+    while(mse && !mse.stopped){
+      const { value, done } = await reader.read();
+      if(done) break;
+      if(value && value.length){
+        mse.queue.push(value);
+        flushChunk();
+      }
+    }
+    // 服务端断流（如 ffmpeg 重启）：不能静默黑屏，主动重连
+    if(mse && !mse.stopped){
+      $('#stConn').textContent='重连中…';
+      setTimeout(pumpLive, 2000);
+    }
+  }catch(e){
+    if(mse && !mse.stopped){
+      $('#stConn').textContent='重连中…';
+      setTimeout(pumpLive, 2000);
+    }
+  }
+}
+
+function flushChunk(){
+  if(!mse || !mse.sb || mse.busy || mse.stopped) return;
+  const sb = mse.sb;
+  if(sb.updating) return;
+  if(!mse.queue.length){
+    // 队列空了就追到直播头，把延迟压到 1 秒上下（实时监控要求）
+    const v = $('#video');
+    if(sb.buffered.length){
+      const end = sb.buffered.end(sb.buffered.length-1);
+      if(end - v.currentTime > 2.2) v.currentTime = end - 0.6;
+      if(v.paused) v.play().catch(()=>{});
+    }
+    return;
+  }
+  mse.busy = true;
+  try{
+    sb.appendBuffer(mse.queue.shift());
+  }catch(e){
+    // 配额不够：清掉已播过的部分再重试
+    try{
+      if(sb.buffered.length){
+        sb.remove(0, Math.max(0, sb.buffered.end(sb.buffered.length-1) - 4));
+      }
+    }catch(_){}
+  }finally{
+    mse.busy = false;
+  }
+}
+
+// ---------- 声音与对讲 ----------
+// 音频随直播流一起下行为 AAC，解开 video 的静音即可听到现场声音；
+// 对讲走独立 WebSocket（/ws/talk），麦克风 PCM16LE 8kHz 转发到设备喇叭。
+function toggleSpeaker(){
+  const v = $('#video'), b = $('#spkBtn');
+  v.muted = !v.muted;
+  if(!v.muted){ v.volume = 1; v.play().catch(()=>{}); }
+  b.textContent = v.muted ? '🔇 声音关' : '🔊 声音开';
+  // 对讲中强制静音（半双工），这里改回时提示
+}
+
+let talk = null;   // {ws, ctx, src, proc, stream, buf:[], on:true}
+
+async function startTalk(){
+  if(!curDev){ ptzTip('先选择设备'); return; }
+  const v = $('#video');
+  talk = { buf: [] };
+  v.dataset.prevMuted = v.muted ? '1' : '0';
+  v.muted = true;                       // 半双工：说话时压掉回声
+  try{
+    talk.stream = await navigator.mediaDevices.getUserMedia({audio:true});
+  }catch(e){
+    ptzTip('无法访问麦克风：' + (e.message||e.name||e));
+    endTalkUI(); return;
+  }
+  talk.ctx = new (window.AudioContext||window.webkitAudioContext)();
+  talk.src = talk.ctx.createMediaStreamSource(talk.stream);
+  talk.proc = talk.ctx.createScriptProcessor(4096, 1, 1);
+  const ratio = Math.round(talk.ctx.sampleRate / 8000);   // 降采样到 8kHz
+  talk.proc.onaudioprocess = e => {
+    if(!talk || !talk.on) return;
+    const inp = e.inputBuffer.getChannelData(0);
+    const n = Math.floor(inp.length / ratio);
+    const pcm = new ArrayBuffer(n*2), dv = new DataView(pcm);
+    for(let i=0;i<n;i++){
+      let s = Math.max(-1, Math.min(1, inp[i*ratio]));
+      dv.setInt16(i*2, s<0 ? s*32768 : s*32767, true);
+    }
+    talk.buf.push(new Uint8Array(pcm));
+    flushTalk();
+  };
+  talk.ws = new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws/talk/${curDev.deviceId}`);
+  talk.ws.binaryType = 'arraybuffer';
+  talk.ws.onopen = flushTalk;
+  talk.ws.onerror = () => ptzTip('对讲连接失败');
+  talk.ws.onclose = () => { if(talk) talk.opened = false; };
+  talk.src.connect(talk.proc);
+  // 不连 destination，避免本地回放自己的声音
+  $('#talkBtn').textContent = '🎤 说话中…松开结束';
+  $('#talkBtn').style.color = 'var(--bad)';
+  ptzTip('对讲已开始（半双工：说话时监控静音）');
+}
+
+function flushTalk(){
+  if(!talk || !talk.ws || talk.ws.readyState !== 1) return;
+  // 与官方播放器一致：凑满 4800 字节（300ms）再发
+  let total = talk.buf.reduce((s,b)=>s+b.length, 0);
+  while(total >= 4800){
+    const pkt = new Uint8Array(4800);
+    let off = 0;
+    while(off < 4800 && talk.buf.length){
+      const b = talk.buf[0];
+      const take = Math.min(b.length, 4800 - off);
+      pkt.set(b.subarray(0, take), off);
+      off += take;
+      if(take === b.length) talk.buf.shift();
+      else talk.buf[0] = b.subarray(take);
+    }
+    talk.ws.send(pkt);
+    total -= 4800;
+  }
+}
+
+function stopTalk(){
+  if(!talk) return;
+  talk.on = false;
+  try{ if(talk.ws && talk.ws.readyState===1) talk.ws.send('stop'); }catch(_){}
+  const t = talk; talk = null;
+  setTimeout(()=>{ try{ t.ws && t.ws.close(); }catch(_){} }, 300);
+  try{ t.proc && t.proc.disconnect(); t.src && t.src.disconnect(); }catch(_){}
+  try{ t.stream && t.stream.getTracks().forEach(x=>x.stop()); }catch(_){}
+  try{ t.ctx && t.ctx.close(); }catch(_){}
+  const v = $('#video');
+  if(v.dataset.prevMuted === '0') v.muted = false;
+  endTalkUI();
+  ptzTip('对讲已结束');
+}
+
+function endTalkUI(){
+  $('#talkBtn').textContent = '🎤 按住说话';
+  $('#talkBtn').style.color = '';
+}
+
+// 按住说话：兼容鼠标与触屏
+(()=>{
+  const b = $('#talkBtn');
+  const down = e => { e.preventDefault(); if(!talk) startTalk(); };
+  const up = e => { e.preventDefault(); if(talk) stopTalk(); };
+  b.addEventListener('mousedown', down);
+  b.addEventListener('mouseup', up);
+  b.addEventListener('mouseleave', e => { if(talk) stopTalk(); });
+  b.addEventListener('touchstart', down, {passive:false});
+  b.addEventListener('touchend', up, {passive:false});
+})();
+
+// ---------- AI 叠加 ----------
+function startAIView(){
+  stopAIView();
+  $('#aiViewMsg').textContent='检测中…';
+  const draw = async ()=>{
+    if(!curDev) return;
+    try{
+      const [imgRes, det] = await Promise.all([
+        fetch(`/api/snapshot/${curDev.deviceId}`),
+        fetch(`/api/detect/${curDev.deviceId}`).then(r=>r.ok?r.json():null).catch(()=>null),
+      ]);
+      if(!imgRes.ok) return;
+      const img = await createImageBitmap(await imgRes.blob());
+      const cv=$('#overlay'), box=$('.video-box');
+      if(cv.width!==box.clientWidth||cv.height!==box.clientHeight){
+        cv.width=box.clientWidth; cv.height=box.clientHeight;
+      }
+      const ctx=cv.getContext('2d');
+      ctx.clearRect(0,0,cv.width,cv.height);
+      if(!det){ $('#aiViewMsg').textContent='画面获取失败'; return; }
+      const scale=Math.min(cv.width/det.w, cv.height/det.h);
+      const dw=det.w*scale, dh=det.h*scale;
+      const dx=(cv.width-dw)/2, dy=(cv.height-dh)/2;
+      ctx.drawImage(img,dx,dy,dw,dh);
+      // 和视频的 CSS 变换保持同步，画面平移/缩放后框才不会飘
+      ctx.save();
+      ctx.translate(cv.width/2+VP.x, cv.height/2+VP.y);
+      ctx.scale(VP.z, VP.z);
+      ctx.translate(-cv.width/2, -cv.height/2);
+      ctx.lineWidth=3;
+      ctx.font='600 15px -apple-system,"PingFang SC",sans-serif';
+      (det.objects||[]).forEach(o=>{
+        const [x1,y1,x2,y2]=o.box;
+        const X1=dx+x1*scale, Y1=dy+y1*scale, W=(x2-x1)*scale, H=(y2-y1)*scale;
+        const color = o.name==='person' ? '#f85149' : '#f0a020';
+        ctx.strokeStyle=color;
+        ctx.strokeRect(X1,Y1,W,H);
+        const label=`${o.name} ${o.conf.toFixed(2)}`;
+        const tw=ctx.measureText(label).width+12;
+        ctx.fillStyle=color;
+        ctx.fillRect(X1,Math.max(0,Y1-22),tw,22);
+        ctx.fillStyle='#fff';
+        ctx.fillText(label,X1+6,Math.max(16,Y1-6));
+      });
+      ctx.restore();
+      const names=(det.objects||[]).map(o=>o.name).join('、');
+      $('#aiViewMsg').textContent = det.count
+        ? `${new Date().toTimeString().slice(0,8)} 检出 ${det.count} 个：${names}`
+        : `${new Date().toTimeString().slice(0,8)} 画面内暂无可识别目标`;
+    }catch(e){}
+  };
+  draw();
+  aiTimer=setInterval(draw,2000);
+}
+
+async function ptzSelfTest(btn){
+  if(!curDev) return;
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '检测中…约 20 秒';
+  toast('开始云台自检：四个方向各转 3 秒，请对准有明显参照物的画面');
+  try{
+    const r = await api(`/api/ptz/selftest/${encodeURIComponent(curDev.deviceId)}`);
+    const lines = Object.entries(r.dirs).map(([k,v])=>`${{left:'左',right:'右',up:'上',down:'下'}[k]} ${v}`).join('  ');
+    toast((r.moved?'✅ ':'⚠️ ')+r.note+`（基线噪声 ${r.baseline}，位移 ${lines}）`);
+  }catch(e){
+    toast('自检失败：'+(e.message||e));
+  }finally{
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+function stopAIView(){ if(aiTimer){clearInterval(aiTimer);aiTimer=null;$('#aiViewMsg').textContent='已停止';} }
+
+// ---------- 录像 ----------
+/* ---------------- 24 小时时间轴 ---------------- */
+let TL={date:'',dayStart:0,segments:[],events:[]};
+
+async function initTimeline(){
+  let days=[];
+  try{ days=await api('/api/timeline/days'); }catch(e){}
+  const sel=$('#tlDate');
+  if(!days.length){
+    sel.innerHTML='<option>暂无录像</option>';
+    $('#tlStat').textContent='还没有录像，开启自动录像后这里会长出蓝色条';
+    $('#recBody').innerHTML='<tr><td colspan="5" class="empty">暂无录像</td></tr>';
+    return;
+  }
+  const keep=localStorage.getItem('tlDate');
+  sel.innerHTML=days.map(d=>
+    '<option value="'+d.date+'">'+d.date.replace(/-/g,'/')+'　'+d.files+' 段 · '+(d.size/1073741824).toFixed(2)+' GB</option>'
+  ).join('');
+  if(keep && days.some(d=>d.date===keep)) sel.value=keep;
+  await loadTimeline(sel.value);
+}
+
+async function loadTimeline(date){
+  if(!date) return;
+  localStorage.setItem('tlDate',date);
+  TL.date=date;
+  let d=null;
+  try{ d=await api('/api/timeline?date='+encodeURIComponent(date)); }
+  catch(e){ $('#tlStat').textContent='加载失败'; return; }
+  TL.dayStart=d.dayStart; TL.segments=d.segments; TL.events=d.events;
+  renderTimeline();
+  renderRecTable();
+  clearTimeout(window._recPoll);
+  window._recPoll=setTimeout(function(){
+    if($('#page-record').classList.contains('active')) loadTimeline(TL.date);
+  }, 10000);
+}
+
+function tlPct(ts){ return Math.max(0,Math.min(100,(ts-TL.dayStart)/86400*100)); }
+
+function renderTimeline(){
+  if(!$('#tlHours').dataset.done){
+    let h='';
+    for(let i=0;i<=24;i+=2) h+='<span style="left:'+(i/24*100)+'%">'+String(i).padStart(2,'0')+'</span>';
+    $('#tlHours').innerHTML=h;
+    $('#tlHours').dataset.done='1';
+  }
+  $('#tlSegs').innerHTML=TL.segments.map(function(s){
+    const l=tlPct(s.start), w=Math.max(0.12,(s.end-s.start)/86400*100);
+    const t0=new Date(s.start*1000).toTimeString().slice(0,8);
+    return '<div class="tl-seg" style="left:'+l+'%;width:'+w+'%" title="'+t0+' 起 '+Math.max(1,Math.round(s.dur/60))+' 分钟"></div>';
+  }).join('');
+
+  $('#tlEvts').innerHTML=TL.events.map(function(e,i){
+    const r=e.reason||'';
+    let cls='motion';
+    if(r.indexOf('person')===0) cls='person';
+    else if(r.indexOf('moving')===0) cls='vehicle';
+    const names=(e.targets||[]).map(function(t){return t.name}).join('、')||r;
+    return '<div class="tl-evt '+cls+'" style="left:'+tlPct(e.ts)+'%" data-idx="'+i+'" data-tip="'+e.time+' · '+names+'"></div>';
+  }).join('');
+
+  const total=TL.segments.reduce(function(a,s){return a+s.dur},0);
+  const persons=TL.events.filter(function(e){return (e.reason||'').indexOf('person')===0}).length;
+  $('#tlStat').textContent=TL.segments.length+' 段录像 · 共 '+(total/3600).toFixed(1)+' 小时 · '+TL.events.length+' 个 AI 事件（人 '+persons+'）';
+  bindTrack();
+}
+
+function bindTrack(){
+  const tr=$('#tlTrack');
+  if(tr.dataset.bound) return;
+  tr.dataset.bound='1';
+  const tip=$('#tlTip');
+  let dragging=false;
+
+  function at(ev){
+    const r=tr.getBoundingClientRect();
+    const x=Math.max(0,Math.min(r.width,ev.clientX-r.left));
+    return TL.dayStart+(x/r.width)*86400;
+  }
+  function showCursor(ts){
+    const c=$('#tlCursor');
+    c.classList.add('on');
+    c.style.left=tlPct(ts)+'%';
+  }
+
+  tr.addEventListener('pointerdown',function(ev){
+    if(ev.target.classList.contains('tl-evt')) return;
+    dragging=true;
+    try{ tr.setPointerCapture(ev.pointerId); }catch(e){}
+    showCursor(at(ev));
+  });
+  tr.addEventListener('pointermove',function(ev){
+    const ts=at(ev);
+    if(dragging) showCursor(ts);
+    const seg=TL.segments.find(function(s){return ts>=s.start&&ts<=s.end});
+    tip.textContent=new Date(ts*1000).toTimeString().slice(0,8)+(seg?' · 有录像':' · 无录像');
+    tip.style.display='block';
+    tip.style.left=(ev.clientX+12)+'px';
+    tip.style.top=(ev.clientY-34)+'px';
+  });
+  tr.addEventListener('pointerup',function(ev){
+    if(!dragging) return;
+    dragging=false;
+    tlSeek(at(ev));
+  });
+  tr.addEventListener('pointerleave',function(){ tip.style.display='none'; });
+
+  tr.addEventListener('mouseover',function(ev){
+    const e=ev.target.closest('.tl-evt');
+    if(!e) return;
+    tip.textContent=e.dataset.tip||'AI 事件';
+    tip.style.display='block';
+    tip.style.left=(ev.clientX+12)+'px';
+    tip.style.top=(ev.clientY-34)+'px';
+  });
+  tr.addEventListener('click',function(ev){
+    const e=ev.target.closest('.tl-evt');
+    if(!e) return;
+    const item=TL.events[+e.dataset.idx];
+    if(item&&item.video) playRec(item.video,item.time,0); else if(item) tlSeek(item.ts);
+  });
+}
+
+function tlSeek(ts){
+  const seg=TL.segments.find(function(s){return ts>=s.start&&ts<=s.end});
+  if(!seg){
+    let best=null,bd=1e9;
+    TL.segments.forEach(function(s){
+      const d=Math.min(Math.abs(s.start-ts),Math.abs(s.end-ts));
+      if(d<bd){bd=d;best=s}
+    });
+    if(!best){ toast('这个时间点附近没有录像'); return; }
+    playRec(best.file,new Date(best.start*1000).toTimeString().slice(0,8),0,'该时刻没有录像，已跳到最近的片段');
+    return;
+  }
+  playRec(seg.file,new Date(seg.start*1000).toTimeString().slice(0,8),Math.max(0,ts-seg.start));
+}
+
+function tlGotoEvent(){
+  if(!TL.events.length){ toast('当天没有 AI 事件'); return; }
+  const cur=parseFloat($('#tlCursor').style.left)||-1;
+  const next=TL.events.find(function(e){return tlPct(e.ts)>cur})||TL.events[0];
+  const c=$('#tlCursor');
+  c.classList.add('on');
+  c.style.left=tlPct(next.ts)+'%';
+  if(next.video) playRec(next.video,next.time,0); else tlSeek(next.ts);
+}
+
+function renderRecTable(){
+  const tb=$('#recBody');
+  $('#recCount').textContent='共 '+TL.segments.length+' 段';
+  if(!TL.segments.length){
+    tb.innerHTML='<tr><td colspan="5" class="empty">这一天没有录像</td></tr>';
+    return;
+  }
+  tb.innerHTML=TL.segments.map(function(s){
+    const a=new Date(s.start*1000).toTimeString().slice(0,8);
+    const b=new Date(s.end*1000).toTimeString().slice(0,8);
+    const d0=Math.round(s.dur);
+    const dur = d0>=3600 ? Math.floor(d0/3600)+' 小时 '+Math.round(d0%3600/60)+' 分'
+              : d0>=60 ? Math.floor(d0/60)+' 分 '+String(d0%60).padStart(2,'0')+' 秒'
+              : d0+' 秒';
+    return '<tr><td class="mono">'+a+' – '+b+'</td><td>'+dur+'</td><td>'+(s.size/1048576).toFixed(1)+' MB</td>'
+      +'<td><span class="tag" style="color:#3fb950">H.264 MP4</span></td>'
+      +'<td><button class="btn ghost sm" onclick="playRec(\''+s.file+'\',\''+a+'\',0)">播放</button></td></tr>';
+  }).join('');
+}
+
+function toast(msg){
+  const t=document.createElement('div');
+  t.textContent=msg;
+  t.style.cssText='position:fixed;left:50%;bottom:40px;transform:translateX(-50%);background:rgba(13,17,23,.95);'
+    +'border:1px solid #243040;color:#e6edf3;padding:8px 16px;border-radius:8px;font-size:13px;z-index:200';
+  document.body.appendChild(t);
+  setTimeout(function(){t.remove()},2200);
+}
+
+function playRec(file,label,offset,note){
+  $('#mTitle').textContent='录像回放 · '+label;
+  const tip=$('#mMeta');
+  tip.textContent = note || '加载中…';
+  $('#mShots').innerHTML='';
+  const v=$('#mVideo');
+  v.onloadedmetadata=function(){
+    // 文件本身是 H.264，整段下发即可；用 currentTime 定位比服务端 seek 转码快得多
+    if(offset && offset>0 && isFinite(v.duration) && offset < v.duration-1){
+      try{ v.currentTime = offset; }catch(e){}
+    }
+    v.onloadedmetadata=null;
+  };
+  v.oncanplay=function(){ tip.textContent='可直接拖动进度条回看。'; v.oncanplay=null; };
+  v.onerror=function(){ tip.textContent='这个文件暂时打不开（可能刚写入还没转码完成）。'; v.onerror=null; };
+  v.src='/api/play?f='+encodeURIComponent(file);
+  $('#modal').classList.add('show');
+  v.play().catch(function(){});
+}
+
+async function backupAll(){
+  const r=await api('/api/recordings/backup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  alert(`已加入备份队列：${r.queued} 个文件`);
+}
+
+// ---------- 事件 ----------
+async function loadEvents(){
+  const evts=await api('/api/events?limit=60');
+  const g=$('#evtGrid');
+  if(!evts.length){g.innerHTML='<div class="empty">暂无事件。当 AI 检测到人或移动物体时会自动生成。</div>';return}
+  g.innerHTML=evts.map(e=>`<div class="evt" onclick="openEvent('${e.id}')">
+    <img src="/data/${encodeURIComponent(e.shots[0]||'')}" loading="lazy" onerror="this.style.opacity=.3">
+    <div class="info">
+      <div class="t">${e.time}</div>
+      <div class="m"><span class="tag red">${(e.reason||'').split(':')[0]}</span><span class="tag">${e.duration||0}s</span>${e.targets?.length?e.targets[0].name:''}</div>
+    </div></div>`).join('');
+}
+async function openEvent(id){
+  const m=await api(`/api/events/${id}/meta`);
+  $('#mTitle').textContent=`${m.time} · ${m.device}`;
+  const tip=$('#mMeta');
+  tip.innerHTML=`触发原因：<b>${m.reason}</b> · 时长 ${m.duration}s · 目标：${(m.targets||[]).map(t=>t.name+' '+t.conf).join(', ')||'无'} <span style="opacity:.6">（视频正在转码…）</span>`;
+  const v=$('#mVideo');
+  v.oncanplay=()=>{
+    tip.innerHTML=`触发原因：<b>${m.reason}</b> · 时长 ${m.duration}s · 目标：${(m.targets||[]).map(t=>t.name+' '+t.conf).join(', ')||'无'}`;
+    v.oncanplay=null;
+  };
+  v.src=m.video?`/api/play?f=${encodeURIComponent(m.video)}`:'';
+  $('#mShots').innerHTML=(m.shots||[]).map(s=>`<img src="/data/${encodeURIComponent(s)}" onclick="window.open(this.src)">`).join('');
+  $('#modal').classList.add('show');
+  if(m.video) v.play().catch(()=>{});
+}
+function closeModal(){$('#modal').classList.remove('show');const v=$('#mVideo');v.pause();v.removeAttribute('src');v.load()}
+
+// ---------- 云盘 ----------
+const DRV_FIELDS={
+  local:[['root','本地存储根目录','/opt/unicomai/data/cloud_sim']],
+  webdav:[['url','WebDAV 地址','https://dav.jianguoyun.com/dav/'],['username','账号',''],['password','应用密码','']],
+  s3:[['endpoint','Endpoint','https://oss-cn-hangzhou.aliyuncs.com'],['bucket','Bucket',''],['accessKey','AccessKey',''],['secretKey','SecretKey',''],['region','Region','us-east-1'],['pathStyle','路径风格（MinIO/OSS 选 path，AWS/COS 可选 virtual）','path'],['prefix','上传前缀','unicom-ai']],
+  baidu:[['appKey','AppKey',''],['secretKey','SecretKey',''],['refreshToken','RefreshToken',''],['dir','网盘目录','/apps/unicomAI']],
+  cmcc:[
+    ['authorization','Authorization（Basic 后面那串）','粘贴浏览器里的 Authorization','登录 yun.139.com → F12 → 网络 → 任一 hcy/... 请求 → 请求头 Authorization，只复制 Basic 后面的部分'],
+    ['dir','父目录 ID','/','留 / 表示传到个人云根目录'],
+  ],
+  ctyun:[
+    ['cookie','浏览器 Cookie','复制整条 Cookie','登录 cloud.189.cn → F12 → 网络 → 任一条 cloud.189.cn 请求 → 请求头里的 Cookie 整条复制'],
+    ['dir','目录 ID','-11','-11 是天翼云盘根目录'],
+  ],
+  cucc:[
+    ['accessToken','accessToken（UUID）','粘贴 token','登录 pan.wo.cn → F12 → 网络 → 找带 dispatcher 的请求 → 响应里的 token'],
+    ['dir','目录 ID','0','0 表示根目录'],
+  ]
+};
+let cloudCfg={};
+function renderDriverForm(){
+  const drv=$('#drvSelect').value;
+  const c=(cloudCfg.config||{});
+  $('#drvForm').innerHTML=DRV_FIELDS[drv].map(([k,label,ph,hint])=>{
+    if(k==='pathStyle'){
+      const cur=(c[k]===undefined)?'path':(c[k]?'path':'virtual');
+      return `<label>${label}</label><select id="f_${k}">
+        <option value="path"${cur==='path'?' selected':''}>path（Endpoint/Bucket/Key）</option>
+        <option value="virtual"${cur==='virtual'?' selected':''}>virtual-hosted（Bucket.Endpoint/Key）</option></select>`;
+    }
+    const val = (c[k]==='' || c[k]===undefined) ? '' : c[k];
+    return `<label>${label}</label><input id="f_${k}" placeholder="${ph}" value="${val}">
+      ${hint?`<div style="font-size:11px;color:var(--muted);margin:-4px 0 8px;line-height:1.5">${hint}</div>`:''}`;
+  }).join('');
+}
+async function loadCloud(){
+  cloudCfg=await api('/api/storage');
+  $('#drvSelect').value=cloudCfg.driver;
+  renderDriverForm();
+  ['swCloud','swBkRec','swBkEvt'].forEach((id,i)=>{
+    const keys=['enabled','backupRecordings','uploadEvents'];
+    $('#'+id).classList.toggle('on',!!cloudCfg[keys[i]]);
+    $('#'+id).onclick=()=>$('#'+id).classList.toggle('on');
+  });
+  $('#qinfo').textContent=`队列 ${cloudCfg.queue} · 驱动 ${cloudCfg.driver}`;
+  const tb=$('#upBody');
+  if(!cloudCfg.recent?.length){tb.innerHTML='<tr><td colspan="4" class="empty">暂无上传</td></tr>';return}
+  tb.innerHTML=cloudCfg.recent.map(u=>`<tr>
+    <td class="mono">${u.time}</td><td class="mono">${(u.file||'').slice(0,26)}</td>
+    <td>${u.kind}</td>
+    <td>${u.ok?'<span style="color:var(--ok)">成功</span>':'<span style="color:var(--bad)">失败</span>'}</td></tr>`).join('');
+}
+function collectCfg(){
+  const drv=$('#drvSelect').value;
+  // 带上其它驱动的已存配置，来回切换驱动不会把密钥清空
+  const c=Object.assign({}, cloudCfg.config||{});
+  DRV_FIELDS[drv].forEach(([k])=>{const el=$('#f_'+k); if(el) c[k]=el.value.trim();});
+  if(drv==='s3') c.pathStyle = (c.pathStyle||'path')==='path';
+  return {driver:drv,config:c,
+    enabled:$('#swCloud').classList.contains('on'),
+    backupRecordings:$('#swBkRec').classList.contains('on'),
+    uploadEvents:$('#swBkEvt').classList.contains('on')};
+}
+async function saveCloud(){
+  await api('/api/storage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collectCfg())});
+  $('#cloudMsg').style.color='var(--ok)'; $('#cloudMsg').textContent='已保存';
+  setTimeout(()=>$('#cloudMsg').textContent='',2500);
+}
+async function testCloud(){
+  $('#cloudMsg').style.color='var(--muted)'; $('#cloudMsg').textContent='测试中…';
+  const r=await api('/api/storage/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collectCfg())});
+  $('#cloudMsg').style.color=r.ok?'var(--ok)':'var(--bad)';
+  $('#cloudMsg').textContent=r.message;
+}
+
+// ---------- 登录 ----------
+async function authGate(){
+  let st;
+  try{ st = await fetch('/api/auth/status').then(r=>r.json()); }
+  catch(e){ return; }
+  if(st.authed) return;
+  const box=$('#loginMask');
+  box.style.display='flex';
+  $('#loginTitle').textContent = st.needSetup ? '初始化管理员账号' : '监控平台登录';
+  $('#loginUser').value = st.needSetup ? 'admin' : (st.user||'');
+  $('#loginUser').disabled = !st.needSetup;
+  $('#loginBtn').textContent = st.needSetup ? '创建账号并进入' : '登 录';
+  box.dataset.mode = st.needSetup ? 'setup' : 'login';
+  // 已锁定则直接倒计时
+  if(st.locked) loginLockTick(st.lockRemaining);
+}
+function loginLockTick(sec){
+  const b=$('#loginBtn'), h=$('#loginMsg');
+  b.disabled=true;
+  const tick=()=>{
+    if(sec<=0){ b.disabled=false; h.textContent=''; return; }
+    h.style.color='var(--bad)';
+    h.textContent='账号已锁定，剩余 '+Math.ceil(sec/60)+' 分钟';
+    sec--; setTimeout(tick,1000);
+  };
+  tick();
+}
+async function doLogin(){
+  const box=$('#loginMask');
+  const isSetup = box.dataset.mode==='setup';
+  const msg=$('#loginMsg');
+  const body={
+    user: $('#loginUser').value.trim(),
+    password: $('#loginPass').value
+  };
+  if(isSetup && body.password.length<6){
+    msg.style.color='var(--bad)'; msg.textContent='密码至少 6 位'; return;
+  }
+  try{
+    const r = await fetch('/api/auth/'+(isSetup?'setup':'login'),{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){
+      msg.style.color='var(--bad)';
+      msg.textContent = d.detail || '失败';
+      if(String(d.detail||'').includes('锁定')) loginLockTick(600);
+      return;
+    }
+    location.reload();
+  }catch(e){
+    msg.style.color='var(--bad)'; msg.textContent='网络异常';
+  }
+}
+
+// ---------- WebRTC 低延迟模式 ----------
+let wrtcPC = null;
+async function toggleWebRTC(){
+  if(wrtcPC){ stopWebRTC(); startLive(); return; }
+  if(!curDev) return;
+  stopLive();
+  stopWebRTC();
+  const v=$('#video');
+  $('#liveBadge').style.display='flex';
+  $('#stConn').textContent='WebRTC 协商中…';
+  try{
+    wrtcPC = new RTCPeerConnection();
+    const stream = new MediaStream();
+    wrtcPC.addTransceiver('video', {direction:'recvonly'});
+    wrtcPC.ontrack = e=>{
+      stream.addTrack(e.track);
+      v.srcObject = stream;
+      v.play().catch(()=>{});
+      $('#stConn').textContent='已连接 (WebRTC)';
+    };
+    wrtcPC.onconnectionstatechange = ()=>{
+      $('#stConn').textContent = 'WebRTC ' + wrtcPC.connectionState;
+      if(['failed','disconnected','closed'].includes(wrtcPC.connectionState)){
+        stopWebRTC(); startLive();   // 回落 MSE
+      }
+    };
+    const offer = await wrtcPC.createOffer();
+    await wrtcPC.setLocalDescription(offer);
+    const r = await fetch('/api/webrtc/offer',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({deviceId:curDev.deviceId, sdp:offer.sdp, type:'offer'})});
+    if(!r.ok){ throw new Error('HTTP '+r.status); }
+    const ans = await r.json();
+    await wrtcPC.setRemoteDescription({type:'answer', sdp:ans.sdp});
+    $('#wrtcBtn').textContent = '退出低延迟模式';
+    $('#wrtcBtn').style.color = 'var(--ok)';
+  }catch(e){
+    ptzTip('WebRTC 不可用：'+e.message);
+    stopWebRTC(); startLive();
+  }
+}
+function stopWebRTC(){
+  if(wrtcPC){ try{ wrtcPC.close(); }catch(e){} wrtcPC = null; }
+  const v=$('#video');
+  if(v && v.srcObject){ v.srcObject = null; }
+  const b=$('#wrtcBtn'); if(b){ b.textContent='低延迟模式 (WebRTC)'; b.style.color=''; }
+}
+
+// ---------- 账号 ----------
+async function loadAccount(){
+  try{
+    const st = await fetch('/api/auth/status').then(r=>r.json());
+    $('#accName').textContent = st.user || '-';
+  }catch(e){}
+}
+async function saveAccount(){
+  const msg=$('#accMsg');
+  const oldPw=$('#accOld').value, nu=$('#accNewUser').value.trim(),
+        np=$('#accNewPass').value, np2=$('#accNewPass2').value;
+  if(!oldPw){ msg.style.color='var(--bad)'; msg.textContent='请输入当前密码'; return; }
+  if(np && np.length<6){ msg.style.color='var(--bad)'; msg.textContent='新密码至少 6 位'; return; }
+  if(np && np!==np2){ msg.style.color='var(--bad)'; msg.textContent='两次输入的新密码不一致'; return; }
+  if(!np && !nu){ msg.style.color='var(--bad)'; msg.textContent='新账号名和新密码至少填一个'; return; }
+  try{
+    const r = await fetch('/api/auth/password',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({oldPassword:oldPw, newUser:nu||null, newPassword:np||null})});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){ msg.style.color='var(--bad)'; msg.textContent=d.detail||'修改失败'; return; }
+    msg.style.color='var(--ok)';
+    msg.textContent='已保存，正在用新凭据重新登录…';
+    setTimeout(()=>location.reload(), 900);
+  }catch(e){ msg.style.color='var(--bad)'; msg.textContent='网络异常'; }
+}
+async function doLogout(){
+  try{ await fetch('/api/auth/logout',{method:'POST'}); }catch(e){}
+  location.reload();
+}
+
+// ---------- 摄像头接入（多设备） ----------
+let camEditing = null;   // 正在编辑的 deviceId，null=新增模式
+
+async function loadCamAccess(){
+  try{
+    const d = await fetch('/api/device/access').then(r=>r.json());
+    const list = d.devices||[];
+    const box = $('#camList');
+    box.innerHTML = list.length ? list.map(x=>`
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:13px">
+        <span style="flex:1"><b>${(x.name||'摄像头').replace(/</g,'&lt;')}</b>
+          <span style="color:var(--muted);font-size:12px">${x.deviceId.replace(/</g,'&lt;')}</span></span>
+        <span style="font-size:12px;color:${x.tokenSet?'var(--ok)':'var(--bad)'}">${x.tokenSet?'token✓':'无token'}</span>
+        <button class="btn ghost sm" onclick="editCam('${x.deviceId.replace(/'/g,'')}')">编辑</button>
+        <button class="btn ghost sm" style="color:var(--bad)" onclick="delCam('${x.deviceId.replace(/'/g,'')}')">删除</button>
+      </div>`).join('')
+      : '<div style="color:var(--muted);font-size:13px">还没有摄像头，请在下方添加。</div>';
+  }catch(e){}
+}
+function resetCamForm(){
+  camEditing=null;
+  $('#camFormTitle').textContent='添加 / 更新摄像头';
+  ['camName','camDevId','camToken','camWsHost','camRelay'].forEach(id=>$('#'+id).value='');
+  $('#camTokState').textContent='';
+  $('#camToken').placeholder='新增必填；更新已有设备留空则沿用';
+  $('#camReset').style.display='none';
+}
+function editCam(id){
+  fetch('/api/device/access').then(r=>r.json()).then(d=>{
+    const x=(d.devices||[]).find(y=>y.deviceId===id);
+    if(!x) return;
+    camEditing=id;
+    $('#camName').value=x.name||'';
+    $('#camDevId').value=x.deviceId;
+    $('#camWsHost').value=x.wsHost||'';
+    $('#camRelay').value=x.relayServer||'';
+    $('#camToken').value='';
+    $('#camToken').placeholder=x.tokenSet?`留空沿用已保存的 token（${x.tokenMasked}）`:'必填';
+    $('#camTokState').textContent=x.tokenSet?'✅ 已配置':'⚠️ 未配置';
+    $('#camFormTitle').textContent='编辑：'+(x.name||x.deviceId);
+    $('#camReset').style.display='';
+    $('#camMsg').textContent='';
+  });
+}
+async function delCam(id){
+  if(!confirm('确定删除这台摄像头？引擎会停止，录像和事件文件保留。')) return;
+  const msg=$('#camMsg');
+  try{
+    const r=await fetch('/api/device/access/'+encodeURIComponent(id),{method:'DELETE'});
+    const d=await r.json().catch(()=>({}));
+    if(!d.ok){ msg.style.color='var(--bad)'; msg.textContent=d.error||'删除失败'; return; }
+    msg.style.color='var(--ok)'; msg.textContent='已删除';
+    loadCamAccess();
+    devices=await api('/api/devices'); fillDevSel();
+    if(selDevId===id){
+      selDevId=''; stopAIView(); stopWebRTC(); stopLive();
+      if(devices.length){ switchDevice(devices[0].deviceId); }
+    }
+  }catch(e){ msg.style.color='var(--bad)'; msg.textContent='网络异常'; }
+}
+function _camBody(){
+  const b = {
+    name: $('#camName').value.trim(),
+    deviceId: $('#camDevId').value.trim(),
+    wsHost: $('#camWsHost').value.trim(),
+    relayServer: $('#camRelay').value.trim()
+  };
+  const tok = $('#camToken').value.trim();
+  if(tok) b.token = tok;
+  return b;
+}
+async function testCamAccess(){
+  const msg=$('#camMsg');
+  const b=_camBody();
+  if(!b.deviceId || !b.wsHost){ msg.style.color='var(--bad)'; msg.textContent='deviceId 与 wsHost 必填'; return; }
+  if(!b.token && !camEditing){ msg.style.color='var(--bad)'; msg.textContent='新增设备 token 必填'; return; }
+  msg.style.color=''; msg.textContent='测试中（会短暂占用该摄像头会话）…';
+  try{
+    const d = await fetch('/api/device/access/test',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(b)}).then(r=>r.json());
+    msg.style.color = d.ok ? 'var(--ok)' : 'var(--bad)';
+    msg.textContent = d.ok ? '✅ 连接成功，可以保存' : (d.error||'测试失败');
+  }catch(e){ msg.style.color='var(--bad)'; msg.textContent='网络异常'; }
+}
+async function saveCamAccess(){
+  const msg=$('#camMsg');
+  const b=_camBody();
+  if(!b.deviceId || !b.wsHost){ msg.style.color='var(--bad)'; msg.textContent='deviceId 与 wsHost 必填'; return; }
+  if(!b.token && !camEditing){ msg.style.color='var(--bad)'; msg.textContent='新增设备 token 必填'; return; }
+  msg.style.color=''; msg.textContent='正在测试并保存…';
+  try{
+    const d = await fetch('/api/device/access',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(b)}).then(r=>r.json());
+    if(!d.ok){ msg.style.color='var(--bad)'; msg.textContent=d.error||'保存失败'; return; }
+    msg.style.color='var(--ok)';
+    msg.textContent='✅ 已保存（共 '+d.total+' 台），2 秒后刷新';
+    setTimeout(()=>location.reload(), 2000);
+  }catch(e){ msg.style.color='var(--bad)'; msg.textContent='网络异常'; }
+}
+
+// ---------- 轮询 ----------
+authGate();
+loadDevices();
+loadAccount();
+loadCamAccess();
+initPtz();
+setInterval(async()=>{
+  try{
+    const prevConn = curDev && curDev.connected;
+    devices=await api('/api/devices');
+    if(!devices.length) return;
+    curDev=devices.find(d=>d.deviceId===selDevId)||devices[0];
+    if(curDev.deviceId!==selDevId){ selDevId=curDev.deviceId; localStorage.setItem('selDev',selDevId); $('#devSel').value=selDevId; }
+    fillDevSel();
+    renderStatus();
+    if(!prevConn && curDev.connected && $('#page-live').classList.contains('active')) startLive();
+  }catch(e){}
+},4000);
+setInterval(()=>{if($('#page-events').classList.contains('active'))loadEvents()},8000);
+</script>
+<!-- 登录遮罩 -->
+<div id="loginMask" style="display:none;position:fixed;inset:0;background:rgba(5,9,14,.92);z-index:999;align-items:center;justify-content:center;backdrop-filter:blur(4px)">
+  <div style="width:340px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px 26px">
+    <div id="loginTitle" style="font-size:18px;font-weight:600;margin-bottom:18px;text-align:center">监控平台登录</div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:4px">账号</div>
+      <input id="loginUser" style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text);outline:none" autocomplete="username">
+    </div>
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:4px">密码</div>
+      <input id="loginPass" type="password" style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--text);outline:none" autocomplete="current-password">
+    </div>
+    <button id="loginBtn" onclick="doLogin()" style="width:100%;padding:10px;border:none;border-radius:8px;background:#2f6fed;color:#fff;font-size:14px;cursor:pointer">登 录</button>
+    <div id="loginMsg" style="font-size:12px;margin-top:10px;min-height:16px;text-align:center;color:var(--bad)"></div>
+  </div>
+</div>
+<script>
+document.addEventListener('keydown',e=>{
+  const m=$('#loginMask');
+  if(m && m.style.display!=='none' && e.key==='Enter') doLogin();
+});
+</script>
+</body>
+</html>

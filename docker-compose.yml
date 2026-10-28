@@ -1,0 +1,10 @@
+services:
+  unicomai:
+    build: .
+    container_name: unicomai
+    ports:
+      - "8800:8800"
+    volumes:
+      - ./data:/opt/unicomai/data      # 录像/事件/配置持久化
+      - ./logs:/opt/unicomai/logs
+    restart: unless-stopped
